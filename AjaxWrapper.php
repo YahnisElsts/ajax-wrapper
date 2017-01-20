@@ -307,8 +307,16 @@ if (!class_exists('Ajaw_v1_Action', false)):
 endif;
 
 if (!function_exists('ajaw_v1_CreateAction')) {
+
+	/**
+	 * Start building an AJAX action.
+	 *
+	 * @param string $action
+	 * @return Ajaw_v1_ActionBuilder
+	 */
 	function ajaw_v1_CreateAction($action) {
 		$className = apply_filters('ajaw_builder_class_name', 'Ajaw_v1_ActionBuilder');
 		return new $className($action);
 	}
+
 }

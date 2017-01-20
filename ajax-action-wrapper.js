@@ -132,7 +132,7 @@ AjawV1.actionRegistry = (function() {
  * Get a registered action wrapper.
  *
  * @param {string} action
- * @return {AjawAjaxAction|null}
+ * @return {AjawV1.AjawAjaxAction|null}
  */
 AjawV1.getAction = function(action) {
 	return this.actionRegistry.get(action);
