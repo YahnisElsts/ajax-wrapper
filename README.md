@@ -15,8 +15,8 @@ This helper library makes it easier to handle AJAX requests in WordPress plugins
   - [x] Generate and verify nonces. Nonce verification is on by default, but can be disabled.
   - [x] Check capabilities.
   - [x] Verify that all required parameters are set.
-  - [ ] Validate parameter values.
-  - [ ] Set the required HTTP method.
+  - [x] Validate parameter values.
+  - [x] Set the required HTTP method.
 - Resilience.
   - [ ] Lenient response parsing to work around bugs in other plugins. For example, deal with extraneous whitespace and PHP notices in AJAX responses.
   - [ ] Multiple versions of the library can coexist on the same site.
