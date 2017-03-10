@@ -400,7 +400,26 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			}
 
 			//Pass the action to the script.
-			wp_add_inline_script($handle, $this->generateActionJs(), 'after'); //WP 4.5+
+			if (function_exists('wp_add_inline_script')) {
+				wp_add_inline_script($handle, $this->generateActionJs(), 'after'); //WP 4.5+
+			} else {
+				add_filter('script_loader_tag', array($this, 'addRegistrationScript'), 10, 2); //WP 4.1+
+			}
+		}
+
+		/**
+		 * Backwards compatibility for older versions of WP that don't have wp_add_inline_script().
+		 * @internal
+		 *
+		 * @param string $tag
+		 * @param string $handle
+		 * @return string
+		 */
+		public function addRegistrationScript($tag, $handle) {
+			if ($handle === $this->getScriptHandle()) {
+				$tag .= '<script type="text/javascript">' . $this->generateActionJs() . '</script>';
+			}
+			return $tag;
 		}
 
 		protected function generateActionJs() {
