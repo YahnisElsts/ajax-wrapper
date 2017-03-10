@@ -5,8 +5,11 @@ if (!class_exists('Ajaw_v1_ActionBuilder', false)):
 		private $action;
 		private $callback = '__return_null';
 		private $params = array();
+		private $httpMethod = null;
 
 		private $capability = null;
+		private $permissionCheckCallback = null;
+
 		private $mustBeLoggedIn = true;
 		private $checkNonce = true;
 
@@ -23,21 +26,44 @@ if (!class_exists('Ajaw_v1_ActionBuilder', false)):
 			return $this;
 		}
 
-		public function requiredParam($name) {
-			$this->params[$name] = array('required' => true);
+		public function requiredParam($name, $type = null, $validateCallback = null) {
+			return $this->addParameter($name, $type, true, null, $validateCallback);
+		}
+
+		public function optionalParam($name, $defaultValue = null, $type = null, $validateCallback = null) {
+			return $this->addParameter($name, $type, false, $defaultValue, $validateCallback);
+		}
+
+		private function addParameter($name, $type, $required, $defaultValue, $validateCallback) {
+			if (isset($type) && !isset(Ajaw_v1_Action::$defaultValidators[$type])) {
+				throw new LogicException(sprintf(
+					'Unknown parameter type "%s". Supported types are: %s.',
+					$type,
+					implode(', ', array_keys(Ajaw_v1_Action::$defaultValidators[$type]))
+				));
+			}
+
+			$this->params[$name] = array(
+				'required' => $required,
+				'defaultValue' => $defaultValue,
+				'type' => $type,
+				'validateCallback' => $validateCallback,
+			);
 			return $this;
 		}
 
-		public function optionalParam($name, $defaultValue = null) {
-			$this->params[$name] = array(
-				'required' => false,
-				'defaultValue' => $defaultValue,
-			);
+		public function method($httpMethod) {
+			$this->httpMethod = strtoupper($httpMethod);
 			return $this;
 		}
 
 		public function requiredCap($capability) {
 			$this->capability = $capability;
+			return $this;
+		}
+
+		public function permissionCallback($callback) {
+			$this->permissionCheckCallback = $callback;
 			return $this;
 		}
 
@@ -57,6 +83,8 @@ if (!class_exists('Ajaw_v1_ActionBuilder', false)):
 			$instance->mustBeLoggedIn = $this->mustBeLoggedIn;
 			$instance->requiredCap = $this->capability;
 			$instance->nonceCheckEnabled = $this->checkNonce;
+			$instance->method = $this->httpMethod;
+			$instance->permissionCallback = $this->permissionCheckCallback;
 
 			return $instance;
 		}
@@ -76,16 +104,25 @@ if (!class_exists('Ajaw_v1_Action', false)):
 		public $action;
 		public $callback;
 		public $params = array();
+		public $method = null;
 
 		public $requiredCap = null;
 		public $mustBeLoggedIn = false;
 		public $nonceCheckEnabled = true;
+		public $permissionCallback = null;
 
 		private $isScriptRegistered = false;
 
 		public $get = array();
 		public $post = array();
 		public $request = array();
+
+		public static $defaultValidators = array(
+			'int'     => array(__CLASS__, 'validateInt'),
+			'float'   => array(__CLASS__, 'validateFloat'),
+			'boolean' => array(__CLASS__, 'validateBoolean'),
+			'string'  => array(__CLASS__, 'validateString'),
+		);
 
 		public function __construct($action, $callback, $params) {
 			$this->action = $action;
@@ -155,6 +192,15 @@ if (!class_exists('Ajaw_v1_Action', false)):
 		}
 
 		protected function handleAction() {
+			$method = strtoupper(filter_input(INPUT_SERVER, 'REQUEST_METHOD'));
+			if (isset($this->method) && ($method !== $this->method)) {
+				return new WP_Error(
+					'http_method_not_allowed',
+					'The HTTP method is not supported by the request handler.',
+					405
+				);
+			}
+
 			$isAuthorized = $this->checkAuthorization();
 			if ($isAuthorized !== true) {
 				return $isAuthorized;
@@ -201,6 +247,19 @@ if (!class_exists('Ajaw_v1_Action', false)):
 				return new WP_Error('nonce_check_failed', 'Invalid or missing nonce.', 403);
 			}
 
+			if (isset($this->permissionCallback)) {
+				$result = call_user_func($this->permissionCallback);
+				if ($result === false) {
+					return new WP_Error(
+						'permission_callback_failed',
+						'You don\'t have permission to perform this action.',
+						403
+					);
+				} else if (is_wp_error($result)) {
+					return $result;
+				}
+			}
+
 			return true;
 		}
 
@@ -222,18 +281,22 @@ if (!class_exists('Ajaw_v1_Action', false)):
 				$rawParams = wp_unslash($rawParams);
 			}
 
-			//Verify that all of the required parameters are present. Empty strings are not allowed.
+			//Validate all parameters.
 			$inputParams = $rawParams;
 			foreach($this->params as $name => $settings) {
+				//Verify that all of the required parameters are present.
+				//Empty strings are treated as missing parameters.
 				if (isset($inputParams[$name]) && ($inputParams[$name] !== '')) {
-					continue;
-				}
-
-				if (empty($settings['required'])) {
+					$value = $this->validateParameter($settings, $inputParams[$name], $name);
+					if (is_wp_error($value)) {
+						return $value;
+					} else {
+						$inputParams[$name] = $value;
+					}
+				} else if (empty($settings['required'])) {
 					//It's an optional parameter. Use the default value.
 					$inputParams[$name] = $settings['defaultValue'];
 				} else {
-					//This is an error.
 					return new WP_Error(
 						'missing_required_parameter',
 						sprintf('Required parameter is missing or empty: "%s".', $name),
@@ -243,6 +306,75 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			}
 
 			return $inputParams;
+		}
+
+		protected function validateParameter($settings, $value, $name) {
+			if (isset($settings['type'])) {
+				$value = call_user_func(self::$defaultValidators[$settings['type']], $value, $name);
+				if (is_wp_error($value)) {
+					return $value;
+				}
+			}
+			if (isset($settings['validateCallback'])) {
+				$success = call_user_func($settings['validateCallback'], $value);
+				if (is_wp_error($success)) {
+					return $success;
+				} else if ($success === false) {
+					return new WP_Error(
+						'invalid_parameter_value',
+						sprintf('The value of the parameter "%s" is invalid.', $name),
+						400
+					);
+				}
+			}
+			return $value;
+		}
+
+		private static function validateInt($value, $name) {
+			$result = filter_var($value, FILTER_VALIDATE_INT);
+			if ($result === false) {
+				return new WP_Error(
+					'invalid_parameter_value',
+					sprintf('The value of the parameter "%s" is invalid. It must be an integer.', $name),
+					400
+				);
+			}
+			return $result;
+		}
+
+		private static function validateFloat($value, $name) {
+			$result = filter_var($value, FILTER_VALIDATE_FLOAT);
+			if ($result === false) {
+				return new WP_Error(
+					'invalid_parameter_value',
+					sprintf('The value of the parameter "%s" is invalid. It must be a float.', $name),
+					400
+				);
+			}
+			return $result;
+		}
+
+		private static function validateBoolean($value, $name) {
+			$result = filter_var($value, FILTER_VALIDATE_BOOLEAN, array('flags' => FILTER_NULL_ON_FAILURE));
+			if ($result === null) {
+				return new WP_Error(
+					'invalid_parameter_value',
+					sprintf('The value of the parameter "%s" is invalid. It must be a boolean.', $name),
+					400
+				);
+			}
+			return $result;
+		}
+
+		private static function validateString($value, $name) {
+			if (!is_string($value)) {
+				return new WP_Error(
+					'invalid_parameter_value',
+					sprintf('The value of the parameter "%s" is invalid. It must be a string.', $name),
+					400
+				);
+			}
+			return $value;
 		}
 
 		protected function outputJSON($response) {
@@ -268,13 +400,13 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			}
 
 			//Pass the action to the script.
-			wp_add_inline_script($handle, $this->generateActionJs(), 'after');
+			wp_add_inline_script($handle, $this->generateActionJs(), 'after'); //WP 4.5+
 		}
 
 		protected function generateActionJs() {
 			$properties = array(
 				'ajaxUrl' => admin_url('admin-ajax.php'),
-				'requiredMethod' => null,
+				'method' => $this->method,
 				'nonce' => $this->nonceCheckEnabled ? wp_create_nonce($this->action) : null,
 			);
 
@@ -307,16 +439,7 @@ if (!class_exists('Ajaw_v1_Action', false)):
 endif;
 
 if (!function_exists('ajaw_v1_CreateAction')) {
-
-	/**
-	 * Start building an AJAX action.
-	 *
-	 * @param string $action
-	 * @return Ajaw_v1_ActionBuilder
-	 */
 	function ajaw_v1_CreateAction($action) {
-		$className = apply_filters('ajaw_builder_class_name', 'Ajaw_v1_ActionBuilder');
-		return new $className($action);
+		return new Ajaw_v1_ActionBuilder($action);
 	}
-
 }
