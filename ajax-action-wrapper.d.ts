@@ -2,8 +2,8 @@
 
 declare namespace AjawV1 {
 	interface RequestParams { [name: string]: any }
-	interface SuccessCallback { (data, textStatus: string, jqXHR): string }
-	interface ErrorCallback { (data, textStatus: string, jqXHR, errorThrown): string }
+	interface SuccessCallback { (data, textStatus: string, jqXHR): void }
+	interface ErrorCallback { (data, textStatus: string, jqXHR, errorThrown): void }
 
 	class AjawAjaxAction {
 		get(params?: RequestParams, success?: SuccessCallback, error?: ErrorCallback): void;
