@@ -448,7 +448,11 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			$this->get = $_GET;
 			$this->request = $_REQUEST;
 
-			if ( function_exists('get_magic_quotes_gpc') && get_magic_quotes_gpc() ) {
+			if (
+				version_compare(phpversion(), '7.4.0alpha1', '<')
+				&& function_exists('get_magic_quotes_gpc')
+				&& get_magic_quotes_gpc()
+			) {
 				$this->post = stripslashes_deep($this->post);
 				$this->get = stripslashes_deep($this->get);
 			}
