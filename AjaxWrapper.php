@@ -113,10 +113,6 @@ if (!class_exists('Ajaw_v1_Action', false)):
 
 		private $isScriptRegistered = false;
 
-		public $get = array();
-		public $post = array();
-		public $request = array();
-
 		public static $defaultValidators = array(
 			'int'     => array(__CLASS__, 'validateInt'),
 			'float'   => array(__CLASS__, 'validateFloat'),
@@ -192,7 +188,7 @@ if (!class_exists('Ajaw_v1_Action', false)):
 		}
 
 		protected function handleAction() {
-			$method = strtoupper(filter_input(INPUT_SERVER, 'REQUEST_METHOD'));
+			$method = $this->getRequestMethod();
 			if (isset($this->method) && ($method !== $this->method)) {
 				return new WP_Error(
 					'http_method_not_allowed',
@@ -263,9 +259,19 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			return true;
 		}
 
-		protected function parseParameters() {
-			$method = strtoupper(filter_input(INPUT_SERVER, 'REQUEST_METHOD'));
+		protected function getRequestMethod() {
+			return strtoupper(filter_input(
+				INPUT_SERVER,
+				'REQUEST_METHOD',
+				FILTER_VALIDATE_REGEXP,
+				array('options' => array('regexp' => '/^[a-z]{3,20}$/i'))
+			));
+		}
 
+		protected function parseParameters() {
+			$method = $this->getRequestMethod();
+
+			// phpcs:disable WordPress.Security.NonceVerification -- checkAuthorization() is where nonce verification happens.
 			//Retrieve request parameters.
 			if ($method === 'GET') {
 				$rawParams = $_GET;
@@ -274,6 +280,7 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			} else {
 				$rawParams = $_REQUEST;
 			}
+			// phpcs:enable
 
 			//Remove magic quotes. WordPress applies them in wp-settings.php.
 			//There's no hook for wp_magic_quotes, so we use one that's closest in execution order.
@@ -284,7 +291,7 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			//Validate all parameters.
 			$inputParams = $rawParams;
 			foreach($this->params as $name => $settings) {
-				//Verify that all of the required parameters are present.
+				//Verify that all the required parameters are present.
 				//Empty strings are treated as missing parameters.
 				if (isset($inputParams[$name]) && ($inputParams[$name] !== '')) {
 					$value = $this->validateParameter($settings, $inputParams[$name], $name);
@@ -379,7 +386,7 @@ if (!class_exists('Ajaw_v1_Action', false)):
 
 		protected function outputJSON($response) {
 			@header('Content-Type: application/json; charset=' . get_option('blog_charset'));
-			echo json_encode($response);
+			echo wp_json_encode($response);
 		}
 
 		public function registerScript() {
@@ -432,30 +439,12 @@ if (!class_exists('Ajaw_v1_Action', false)):
 			return sprintf(
 				'AjawV1.actionRegistry.add("%s", %s);' . "\n",
 				esc_js($this->action),
-				json_encode($properties)
+				wp_json_encode($properties)
 			);
 		}
 
 		public function getScriptHandle() {
 			return 'ajaw-v1-ajax-action-wrapper';
-		}
-
-		/**
-		 * Capture $_GET, $_POST and $_REQUEST without magic quotes.
-		 */
-		function captureRequestVars() {
-			$this->post = $_POST;
-			$this->get = $_GET;
-			$this->request = $_REQUEST;
-
-			if (
-				version_compare(phpversion(), '7.4.0alpha1', '<')
-				&& function_exists('get_magic_quotes_gpc')
-				&& get_magic_quotes_gpc()
-			) {
-				$this->post = stripslashes_deep($this->post);
-				$this->get = stripslashes_deep($this->get);
-			}
 		}
 	}
 
